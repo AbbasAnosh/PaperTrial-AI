@@ -1,0 +1,93 @@
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.*
+frontend/.vite/
+frontend/.next/
+frontend/.nuxt/
+frontend/.output/
+frontend/.cache/
+frontend/.DS_Store
+frontend/coverage/
+frontend/*.log
+frontend/.vercel
+frontend/.turbo
+frontend/.svelte-kit
+frontend/build/
+frontend/.pnpm-store/
+
+# Backend
+backend/venv/
+backend/.env
+backend/__pycache__/
+backend/*.pyc
+backend/*.pyo
+backend/*.pyd
+backend/.Python
+backend/.pytest_cache/
+backend/.coverage
+backend/htmlcov/
+backend/.mypy_cache/
+backend/.ruff_cache/
+backend/.ipynb_checkpoints
+backend/*.log
+backend/.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+*.sublime-workspace
+*.sublime-project
+
+# System
+.DS_Store
+Thumbs.db
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+# Build
+dist/
+build/
+out/
+.next/
+.nuxt/
+.output/
+
+# Dependencies
+node_modules/
+.pnpm-store/
+.pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp.*
+.pnp
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+.pnp.js
+
+# Testing
+coverage/
+.nyc_output/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Misc
+.env
+.env.*
+!.env.example
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log* 
