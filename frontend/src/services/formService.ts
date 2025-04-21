@@ -124,7 +124,7 @@ export class FormService {
       .from("form_submissions")
       .update({
         retry_count: retryCount + 1,
-        status: "pending",
+        status: "queued",
         updated_at: new Date().toISOString(),
       })
       .eq("id", submissionId)

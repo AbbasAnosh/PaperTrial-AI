@@ -21,10 +21,17 @@ import time
 import secrets
 import traceback
 from app.core.config import settings
-from app.api.v1.auth import router as auth_router
-from app.api.v1.users import router as users_router
-from app.api.v1.forms import router as forms_router
-from app.api.v1.websocket import router as websocket_router
+from app.core.errors import setup_exception_handlers
+
+# Import routers from routes directory
+from app.routes.auth import router as auth_router
+from app.routes.users import router as users_router
+from app.routes.forms import router as forms_router
+from app.routes.tasks import router as tasks_router
+from app.routes.field_mapping import router as field_mapping_router
+from app.routes.ml import router as ml_router
+from app.routes.websocket import router as websocket_router
+from app.routes.pdf import router as pdf_router
 
 # Configure logging
 logging.basicConfig(
@@ -56,12 +63,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 # Create FastAPI app
 app = FastAPI(
-    title=settings.APP_NAME,
-    version=settings.APP_VERSION,
-    description="Paper Trail Automator API",
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json"
+    title=settings.PROJECT_NAME,
+    version=settings.VERSION,
+    description=settings.DESCRIPTION
 )
 
 # Add middleware
@@ -137,22 +141,19 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# Include routers
-app.include_router(auth_router, prefix="/api/v1/auth", tags=["authentication"])
-app.include_router(users_router, prefix="/api/v1/users", tags=["users"])
-app.include_router(forms_router, prefix="/api/v1/forms", tags=["forms"])
-app.include_router(websocket_router, prefix="/api/v1/ws", tags=["websocket"])
+# Include routers with correct prefixes
+app.include_router(auth_router, prefix="/api/v1")
+app.include_router(users_router, prefix="/api/v1")
+app.include_router(forms_router, prefix="/api/v1")
+app.include_router(tasks_router, prefix="/api/v1")
+app.include_router(field_mapping_router, prefix="/api/v1/field-mappings")
+app.include_router(ml_router, prefix="/api/v1")
+app.include_router(websocket_router, prefix="/api/v1")
+app.include_router(pdf_router, prefix="/api/v1")
 
-@app.get("/")
-async def root():
-    """Root endpoint that returns basic API information"""
-    return {
-        "name": settings.APP_NAME,
-        "version": settings.APP_VERSION,
-        "environment": settings.ENVIRONMENT,
-        "docs_url": "/api/docs",
-        "redoc_url": "/api/redoc"
-    }
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
 
 @app.on_event("startup")
 async def startup_event():

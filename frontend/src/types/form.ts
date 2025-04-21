@@ -31,6 +31,11 @@ export interface FormField {
   mappingConfidence?: number;
   relatedTo?: string;
   inheritedConfidence?: number;
+  conditional?: {
+    field: string;
+    value: any;
+    show: boolean;
+  };
 }
 
 export interface FormStep {
@@ -86,11 +91,25 @@ export interface FormSubmission {
   userId: string;
   formData: Record<string, any>;
   screenshots: Record<number, string>;
-  status: "pending" | "submitted" | "failed";
+  status:
+    | "queued"
+    | "processing"
+    | "submitted"
+    | "completed"
+    | "failed"
+    | "cancelled";
   confirmationNumber?: string;
   error?: string;
   createdAt: string;
   updatedAt: string;
+  metadata?: Record<string, any>;
+  documentId?: string;
+  responseData?: Record<string, any>;
+  retryCount?: number;
+  maxRetries?: number;
+  lastRetryAt?: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface ProcessedDocument {

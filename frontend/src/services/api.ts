@@ -56,39 +56,55 @@ class ApiService {
   }
 
   // Form endpoints
-  async uploadPDF(file: File, onProgress?: (progress: number) => void) {
-    // Validate file type
-    if (!file.type || !file.type.toLowerCase().includes("pdf")) {
-      throw new Error("Only PDF files are allowed");
-    }
-
-    // Create a new File object with the correct MIME type
-    const pdfFile = new File([file], file.name, { type: "application/pdf" });
-
-    const formData = new FormData();
-    formData.append("file", pdfFile);
-
-    const config: AxiosRequestConfig = {
-      headers: {
-        "Content-Type": "multipart/form-data",
-      },
-      onUploadProgress: (progressEvent) => {
-        if (onProgress && progressEvent.total) {
-          const progress = (progressEvent.loaded / progressEvent.total) * 100;
-          onProgress(progress);
-        }
-      },
-    };
-
+  async uploadPDF(
+    file: File,
+    onProgress?: (progress: number) => void
+  ): Promise<any> {
     try {
+      // Validate file type
+      if (!file.type || !file.type.toLowerCase().includes("pdf")) {
+        throw new Error("Only PDF files are allowed");
+      }
+
+      // Create FormData
+      const formData = new FormData();
+      formData.append("file", file);
+
+      // Make request with progress tracking
       const response = await this.api.post(
         "/api/v1/forms/process-pdf",
         formData,
-        config
+        {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+          timeout: 30000, // 30 seconds is enough for initial upload
+          onUploadProgress: (progressEvent) => {
+            if (progressEvent.total && onProgress) {
+              const progress =
+                (progressEvent.loaded / progressEvent.total) * 100;
+              onProgress(progress);
+            }
+          },
+        }
       );
+
       return response.data;
     } catch (error) {
       console.error("Error uploading PDF:", error);
+      if (axios.isAxiosError(error)) {
+        if (error.code === "ECONNABORTED") {
+          throw new Error(
+            "Upload timed out. Please try again with a smaller file or check your connection."
+          );
+        }
+        if (error.response?.status === 413) {
+          throw new Error("File is too large. Please upload a smaller file.");
+        }
+        if (error.response?.status === 415) {
+          throw new Error("Invalid file type. Only PDF files are allowed.");
+        }
+      }
       throw error;
     }
   }
@@ -150,6 +166,69 @@ class ApiService {
       console.error("Error getting PDF preview:", error);
       throw error;
     }
+  }
+
+  async checkProcessingStatus(filePath: string): Promise<any> {
+    try {
+      const response = await this.api.get(
+        `/api/v1/forms/processing-status/${filePath}`
+      );
+      return response.data;
+    } catch (error) {
+      console.error("Error checking processing status:", error);
+      throw error;
+    }
+  }
+
+  async checkTaskStatus(taskId: string): Promise<any> {
+    try {
+      const response = await this.api.get(
+        `/api/v1/forms/task-status/${taskId}`
+      );
+      return response.data;
+    } catch (error) {
+      console.error("Error checking task status:", error);
+      throw error;
+    }
+  }
+
+  async pollTaskStatus(
+    taskId: string,
+    onProgress?: (status: string) => void,
+    interval: number = 2000,
+    maxAttempts: number = 150
+  ): Promise<any> {
+    let attempts = 0;
+
+    const poll = async (): Promise<any> => {
+      try {
+        const result = await this.checkTaskStatus(taskId);
+
+        if (onProgress) {
+          onProgress(result.status);
+        }
+
+        if (result.status === "SUCCESS") {
+          return result;
+        } else if (result.status === "FAILURE") {
+          throw new Error(result.error || "Task failed");
+        }
+
+        attempts++;
+        if (attempts >= maxAttempts) {
+          throw new Error("Maximum polling attempts reached");
+        }
+
+        // Wait for the specified interval before polling again
+        await new Promise((resolve) => setTimeout(resolve, interval));
+        return poll();
+      } catch (error) {
+        console.error("Error polling task status:", error);
+        throw error;
+      }
+    };
+
+    return poll();
   }
 }
 

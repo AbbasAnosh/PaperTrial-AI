@@ -7,6 +7,11 @@ import uuid
 import json
 import aiohttp
 import asyncio
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 from bson import ObjectId
@@ -19,6 +24,8 @@ from app.models.form_template import (
     SubmissionMethod
 )
 from app.core.config import settings
+import os
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -250,70 +257,6 @@ class FormService:
             logger.error(f"Error applying validation rule: {str(e)}")
             return False
 
-    async def _process_submission(self, submission_id: str, template: FormTemplate) -> None:
-        """Process a form submission based on the template's submission method."""
-        try:
-            # Get the submission
-            submission = await self.get_submission_by_id(str(submission_id))
-            if not submission:
-                logger.error(f"Submission with ID {submission_id} not found")
-                return
-
-            # Update status to processing
-            await self.submission_collection.update_one(
-                {"_id": ObjectId(str(submission_id))},
-                {"$set": {"status": "processing", "updated_at": datetime.utcnow()}}
-            )
-
-            # Process based on submission method
-            success = False
-            error_message = None
-            response_data = None
-
-            try:
-                if template.submission_method == SubmissionMethod.HTTP_POST:
-                    success, response_data = await self._submit_http_post(template, submission)
-                elif template.submission_method == SubmissionMethod.API:
-                    success, response_data = await self._submit_api(template, submission)
-                elif template.submission_method == SubmissionMethod.EMAIL:
-                    success, response_data = await self._submit_email(template, submission)
-                elif template.submission_method == SubmissionMethod.FILE:
-                    success, response_data = await self._submit_file(template, submission)
-                elif template.submission_method == SubmissionMethod.CUSTOM:
-                    success, response_data = await self._submit_custom(template, submission)
-                else:
-                    error_message = f"Unsupported submission method: {template.submission_method}"
-            except Exception as e:
-                error_message = str(e)
-                logger.error(f"Error processing submission: {str(e)}")
-
-            # Update submission status
-            status = "completed" if success else "failed"
-            await self.submission_collection.update_one(
-                {"_id": ObjectId(str(submission_id))},
-                {
-                    "$set": {
-                        "status": status,
-                        "updated_at": datetime.utcnow(),
-                        "error_message": error_message,
-                        "response_data": response_data
-                    }
-                }
-            )
-        except Exception as e:
-            logger.error(f"Error in submission processing: {str(e)}")
-            # Update submission status to failed
-            await this.submission_collection.update_one(
-                {"_id": ObjectId(str(submission_id))},
-                {
-                    "$set": {
-                        "status": "failed",
-                        "updated_at": datetime.utcnow(),
-                        "error_message": f"Processing error: {str(e)}"
-                    }
-                }
-            )
-
     async def _submit_http_post(self, template: FormTemplate, submission: FormSubmission) -> Tuple[bool, Dict[str, Any]]:
         """Submit form data via HTTP POST."""
         try:
@@ -371,16 +314,81 @@ class FormService:
 
     async def _submit_email(self, template: FormTemplate, submission: FormSubmission) -> Tuple[bool, Dict[str, Any]]:
         """Submit form data via email."""
-        # This would require an email service integration
-        # For now, just return a placeholder
-        return False, {"error": "Email submission not implemented"}
+        try:
+            if not template.submission_email_config:
+                raise ValueError("Email configuration is required for email submission method")
+
+            email_config = template.submission_email_config
+            smtp_settings = email_config.get("smtp_settings", {})
+            email_content = email_config.get("email_template", "")
+
+            # Format email content with submission data
+            formatted_content = email_content.format(**submission.data)
+
+            # Create email message
+            msg = MIMEMultipart()
+            msg["From"] = smtp_settings.get("from_email")
+            msg["To"] = smtp_settings.get("to_email")
+            msg["Subject"] = email_config.get("subject", "Form Submission")
+
+            # Add body
+            msg.attach(MIMEText(formatted_content, "html"))
+
+            # Add attachments if any
+            if submission.screenshots:
+                for filename, content in submission.screenshots.items():
+                    part = MIMEBase("application", "octet-stream")
+                    part.set_payload(content)
+                    encoders.encode_base64(part)
+                    part.add_header(
+                        "Content-Disposition",
+                        f"attachment; filename= {filename}",
+                    )
+                    msg.attach(part)
+
+            # Send email
+            with smtplib.SMTP(smtp_settings.get("host"), smtp_settings.get("port")) as server:
+                if smtp_settings.get("use_tls"):
+                    server.starttls()
+                if smtp_settings.get("username"):
+                    server.login(smtp_settings.get("username"), smtp_settings.get("password"))
+                server.send_message(msg)
+
+            return True, {"message": "Email sent successfully"}
+
+        except Exception as e:
+            logger.error(f"Error in email submission: {str(e)}")
+            return False, {"error": str(e)}
 
     async def _submit_file(self, template: FormTemplate, submission: FormSubmission) -> Tuple[bool, Dict[str, Any]]:
         """Submit form data to a file."""
         try:
-            # This would save the submission data to a file
-            # For now, just return a placeholder
-            return False, {"error": "File submission not implemented"}
+            if not template.submission_file_config:
+                raise ValueError("File configuration is required for file submission method")
+
+            file_config = template.submission_file_config
+            file_path = file_config.get("path")
+            file_format = file_config.get("format", "json")
+
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+            # Format data based on file format
+            if file_format == "json":
+                content = json.dumps(submission.data, indent=2)
+                file_path = f"{file_path}.json"
+            elif file_format == "csv":
+                content = pd.DataFrame(submission.data).to_csv(index=False)
+                file_path = f"{file_path}.csv"
+            else:
+                raise ValueError(f"Unsupported file format: {file_format}")
+
+            # Write to file
+            with open(file_path, "w") as f:
+                f.write(content)
+
+            return True, {"file_path": file_path}
+
         except Exception as e:
             logger.error(f"Error in file submission: {str(e)}")
             return False, {"error": str(e)}
@@ -389,4 +397,116 @@ class FormService:
         """Submit form data using a custom method."""
         # This would allow for custom submission logic
         # For now, just return a placeholder
-        return False, {"error": "Custom submission not implemented"} 
+        return False, {"error": "Custom submission not implemented"}
+
+    async def _process_submission(self, submission_id: str, template: FormTemplate) -> None:
+        """Process a form submission based on the template's submission method."""
+        try:
+            # Get the submission
+            submission = await self.get_submission_by_id(str(submission_id))
+            if not submission:
+                logger.error(f"Submission with ID {submission_id} not found")
+                return
+
+            # Update status to processing and set start time
+            await self.submission_collection.update_one(
+                {"_id": ObjectId(str(submission_id))},
+                {
+                    "$set": {
+                        "status": "processing",
+                        "processing_started_at": datetime.utcnow(),
+                        "updated_at": datetime.utcnow()
+                    }
+                }
+            )
+
+            # Process based on submission method
+            success = False
+            error_message = None
+            error_category = None
+            error_code = None
+            error_details = None
+            response_data = None
+
+            try:
+                if template.submission_method == SubmissionMethod.HTTP_POST:
+                    success, response_data = await self._submit_http_post(template, submission)
+                elif template.submission_method == SubmissionMethod.API:
+                    success, response_data = await self._submit_api(template, submission)
+                elif template.submission_method == SubmissionMethod.EMAIL:
+                    success, response_data = await self._submit_email(template, submission)
+                elif template.submission_method == SubmissionMethod.FILE:
+                    success, response_data = await self._submit_file(template, submission)
+                elif template.submission_method == SubmissionMethod.CUSTOM:
+                    success, response_data = await self._submit_custom(template, submission)
+                else:
+                    error_message = f"Unsupported submission method: {template.submission_method}"
+                    error_category = "validation"
+                    error_code = "UNSUPPORTED_METHOD"
+            except aiohttp.ClientError as e:
+                error_message = str(e)
+                error_category = "network"
+                error_code = "NETWORK_ERROR"
+                error_details = {"error_type": type(e).__name__}
+                logger.error(f"Network error in submission processing: {str(e)}")
+            except ValidationError as e:
+                error_message = str(e)
+                error_category = "validation"
+                error_code = "VALIDATION_ERROR"
+                error_details = {"errors": e.errors()}
+                logger.error(f"Validation error in submission processing: {str(e)}")
+            except TimeoutError as e:
+                error_message = str(e)
+                error_category = "timeout"
+                error_code = "TIMEOUT_ERROR"
+                logger.error(f"Timeout error in submission processing: {str(e)}")
+            except Exception as e:
+                error_message = str(e)
+                error_category = "system"
+                error_code = "SYSTEM_ERROR"
+                error_details = {"error_type": type(e).__name__}
+                logger.error(f"System error in submission processing: {str(e)}")
+
+            # Update submission status with metrics
+            status = "completed" if success else "failed"
+            await self.submission_collection.update_one(
+                {"_id": ObjectId(str(submission_id))},
+                {
+                    "$set": {
+                        "status": status,
+                        "updated_at": datetime.utcnow(),
+                        "error_message": error_message,
+                        "error_category": error_category,
+                        "error_code": error_code,
+                        "error_details": error_details,
+                        "response_data": response_data,
+                        "processing_completed_at": datetime.utcnow()
+                    }
+                }
+            )
+
+            # Calculate and update processing duration
+            if submission.processing_started_at:
+                duration_ms = int((datetime.utcnow() - submission.processing_started_at).total_seconds() * 1000)
+                await self.submission_collection.update_one(
+                    {"_id": ObjectId(str(submission_id))},
+                    {"$set": {"processing_duration_ms": duration_ms}}
+                )
+
+        except Exception as e:
+            logger.error(f"Error in submission processing: {str(e)}")
+            # Update submission status to failed with system error
+            await self.submission_collection.update_one(
+                {"_id": ObjectId(str(submission_id))},
+                {
+                    "$set": {
+                        "status": "failed",
+                        "updated_at": datetime.utcnow(),
+                        "error_message": f"Processing error: {str(e)}",
+                        "error_category": "system",
+                        "error_code": "PROCESSING_ERROR",
+                        "error_details": {"error_type": type(e).__name__},
+                        "processing_completed_at": datetime.utcnow()
+                    }
+                }
+            ) 

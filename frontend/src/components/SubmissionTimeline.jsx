@@ -6,6 +6,8 @@ import {
   CloseCircleOutlined,
   ClockCircleOutlined,
   SyncOutlined,
+  SendOutlined,
+  CloseOutlined,
 } from "@ant-design/icons";
 import { useWebSocket } from "../hooks/useWebSocket";
 
@@ -42,12 +44,18 @@ const SubmissionTimeline = () => {
 
   const getStatusIcon = (status) => {
     switch (status) {
+      case "queued":
+        return <ClockCircleOutlined style={{ color: "#faad14" }} />;
+      case "processing":
+        return <SyncOutlined spin style={{ color: "#1890ff" }} />;
+      case "submitted":
+        return <SendOutlined style={{ color: "#722ed1" }} />;
       case "completed":
         return <CheckCircleOutlined style={{ color: "#52c41a" }} />;
       case "failed":
         return <CloseCircleOutlined style={{ color: "#f5222d" }} />;
-      case "in_progress":
-        return <SyncOutlined spin style={{ color: "#1890ff" }} />;
+      case "cancelled":
+        return <CloseOutlined style={{ color: "#8c8c8c" }} />;
       default:
         return <ClockCircleOutlined style={{ color: "#faad14" }} />;
     }
@@ -78,13 +86,18 @@ const SubmissionTimeline = () => {
               ? "success"
               : submission.status === "failed"
               ? "error"
-              : submission.status === "in_progress"
+              : submission.status === "processing"
               ? "processing"
+              : submission.status === "submitted"
+              ? "warning"
+              : submission.status === "cancelled"
+              ? "default"
               : "default"
           }
           text={submission.status}
         />
-        {submission.status === "failed" && (
+        {(submission.status === "failed" ||
+          submission.status === "cancelled") && (
           <Button type="link" onClick={() => handleRetry(submission.id)}>
             Retry
           </Button>

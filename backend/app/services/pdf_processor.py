@@ -12,6 +12,84 @@ import json
 import logging
 from datetime import datetime, timedelta
 import hashlib
+import torch
+from torch import nn
+from transformers import AutoTokenizer, AutoModel
+import fitz  # PyMuPDF
+import io
+from PIL import Image
+import pytesseract
+from app.core.errors import ProcessingError
+
+logger = logging.getLogger(__name__)
+
+class TextEncoder(nn.Module):
+    def __init__(self, model_name: str = "microsoft/deberta-v3-small"):
+        super().__init__()
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModel.from_pretrained(model_name)
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model.to(self.device)
+
+    def encode(self, texts: List[str]) -> torch.Tensor:
+        encodings = self.tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            max_length=128,
+            return_tensors='pt'
+        )
+        encodings = {k: v.to(self.device) for k, v in encodings.items()}
+        
+        with torch.no_grad():
+            outputs = self.model(**encodings)
+            embeddings = outputs.last_hidden_state[:, 0, :]  # Use [CLS] token embedding
+            return embeddings
+
+class TorchDBSCAN:
+    def __init__(self, eps: float = 0.5, min_samples: int = 5):
+        self.eps = eps
+        self.min_samples = min_samples
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    def fit_predict(self, X: torch.Tensor) -> torch.Tensor:
+        """PyTorch implementation of DBSCAN clustering."""
+        X = X.to(self.device)
+        n_samples = X.shape[0]
+        
+        # Calculate pairwise distances
+        distances = torch.cdist(X, X)
+        
+        # Find neighbors
+        neighbors = (distances <= self.eps).sum(dim=1)
+        core_points = neighbors >= self.min_samples
+        
+        # Initialize labels
+        labels = torch.full((n_samples,), -1, device=self.device)
+        cluster_id = 0
+        
+        # Process core points
+        for i in range(n_samples):
+            if not core_points[i] or labels[i] != -1:
+                continue
+                
+            # Start new cluster
+            labels[i] = cluster_id
+            stack = [i]
+            
+            while stack:
+                current = stack.pop()
+                neighbors = torch.where(distances[current] <= self.eps)[0]
+                
+                for neighbor in neighbors:
+                    if labels[neighbor] == -1:
+                        labels[neighbor] = cluster_id
+                        if core_points[neighbor]:
+                            stack.append(neighbor.item())
+            
+            cluster_id += 1
+        
+        return labels
 
 class PDFProcessor:
     def __init__(self):
@@ -23,6 +101,9 @@ class PDFProcessor:
         self.cache_ttl = timedelta(hours=24)  # Cache TTL of 24 hours
         os.makedirs(self.cache_dir, exist_ok=True)
         self.logger = logging.getLogger(__name__)
+        self.encoder = TextEncoder()
+        self.clusterer = TorchDBSCAN(eps=0.3, min_samples=2)
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     def _get_cache_key(self, file_path: str, form_type: Optional[str] = None) -> str:
         """Generate a unique cache key based on file content and form type"""
@@ -226,4 +307,116 @@ class PDFProcessor:
                 if not self._is_cache_valid(cache_path):
                     os.remove(cache_path)
         except Exception as e:
-            self.logger.error(f"Error during cleanup: {str(e)}", exc_info=True) 
+            self.logger.error(f"Error during cleanup: {str(e)}", exc_info=True)
+
+    def _extract_form_fields(self, pdf_document: fitz.Document) -> List[Dict[str, Any]]:
+        """Extract form fields from PDF."""
+        form_fields = []
+        
+        for page_num in range(len(pdf_document)):
+            page = pdf_document[page_num]
+            widgets = page.widgets()
+            
+            for widget in widgets:
+                field_type = widget.field_type
+                field_name = widget.field_name
+                field_value = widget.field_value
+                
+                form_fields.append({
+                    "page": page_num + 1,
+                    "type": field_type,
+                    "name": field_name,
+                    "value": field_value,
+                    "rect": widget.rect
+                })
+        
+        return form_fields
+
+    def _extract_text_blocks(self, pages_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Extract and organize text blocks from pages."""
+        text_blocks = []
+        
+        for page in pages_data:
+            # Split text into paragraphs
+            paragraphs = [p.strip() for p in page["text"].split("\n\n") if p.strip()]
+            
+            for para in paragraphs:
+                text_blocks.append({
+                    "text": para,
+                    "page": page["page_number"],
+                    "type": "paragraph"
+                })
+            
+            # Add OCR text from images
+            for img in page["images"]:
+                if img["text"].strip():
+                    text_blocks.append({
+                        "text": img["text"].strip(),
+                        "page": page["page_number"],
+                        "type": "image_ocr"
+                    })
+        
+        return text_blocks
+
+    async def process_pdf(self, pdf_content: bytes) -> Dict[str, Any]:
+        """Process a PDF file and extract structured information."""
+        try:
+            # Open PDF from bytes
+            pdf_document = fitz.open(stream=pdf_content, filetype="pdf")
+            
+            # Extract text and images from each page
+            pages_data = []
+            for page_num in range(len(pdf_document)):
+                page = pdf_document[page_num]
+                
+                # Extract text
+                text = page.get_text()
+                
+                # Extract images
+                images = []
+                for img_index, img in enumerate(page.get_images()):
+                    try:
+                        xref = img[0]
+                        base_image = pdf_document.extract_image(xref)
+                        image_bytes = base_image["image"]
+                        
+                        # Convert to PIL Image for OCR
+                        image = Image.open(io.BytesIO(image_bytes))
+                        
+                        # Perform OCR on image
+                        ocr_text = pytesseract.image_to_string(image)
+                        
+                        images.append({
+                            "index": img_index,
+                            "text": ocr_text,
+                            "bytes": image_bytes
+                        })
+                    except Exception as e:
+                        logger.warning(f"Failed to process image {img_index} on page {page_num}: {str(e)}")
+                
+                pages_data.append({
+                    "page_number": page_num + 1,
+                    "text": text,
+                    "images": images
+                })
+            
+            # Extract form fields
+            form_fields = self._extract_form_fields(pdf_document)
+            
+            # Cluster similar text blocks
+            text_blocks = self._extract_text_blocks(pages_data)
+            text_embeddings = self.encoder.encode([block["text"] for block in text_blocks])
+            clusters = self.clusterer.fit_predict(text_embeddings)
+            
+            # Add cluster information to text blocks
+            for i, block in enumerate(text_blocks):
+                block["cluster"] = clusters[i].item()
+            
+            return {
+                "pages": pages_data,
+                "form_fields": form_fields,
+                "text_blocks": text_blocks
+            }
+            
+        except Exception as e:
+            raise ProcessingError(f"Failed to process PDF: {str(e)}") 
