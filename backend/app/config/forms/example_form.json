@@ -1,0 +1,56 @@
+{
+  "form_id": "example_form",
+  "name": "Example Government Form",
+  "base_url": "https://example.gov/form",
+  "pages": [
+    {
+      "name": "personal_info",
+      "url_contains": "step1",
+      "fields": {
+        "input[name='full_name']": {
+          "type": "text",
+          "value": "{{user.full_name}}",
+          "required": true
+        },
+        "input[name='ssn']": {
+          "type": "text",
+          "value": "{{user.ssn}}",
+          "required": true,
+          "mask": "XXX-XX-XXXX"
+        },
+        "select[name='state']": {
+          "type": "select",
+          "value": "{{user.state}}",
+          "required": true
+        }
+      },
+      "actions": [
+        {
+          "type": "click",
+          "selector": "button.next"
+        }
+      ]
+    },
+    {
+      "name": "document_upload",
+      "url_contains": "step2",
+      "fields": {
+        "input[type='file']": {
+          "type": "file",
+          "value": "{{documents.identification}}",
+          "required": true
+        }
+      },
+      "actions": [
+        {
+          "type": "click",
+          "selector": "button.submit"
+        }
+      ]
+    }
+  ],
+  "success_criteria": {
+    "url_contains": "confirmation",
+    "element_exists": ".confirmation-number"
+  }
+} 

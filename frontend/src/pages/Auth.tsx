@@ -1,18 +1,24 @@
-
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { supabase } from '@/integrations/supabase/client';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { useToast } from '@/components/ui/use-toast';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Loader2, Mail, Lock, LogIn, UserPlus } from 'lucide-react';
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { useToast } from "@/components/ui/use-toast";
+import { Label } from "@/components/ui/label";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Loader2, Mail, Lock, LogIn, UserPlus } from "lucide-react";
 
 export default function Auth() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const navigate = useNavigate();
@@ -21,19 +27,19 @@ export default function Auth() {
   const validateForm = () => {
     setAuthError(null);
     if (!email) {
-      setAuthError('Email is required');
+      setAuthError("Email is required");
       return false;
     }
-    if (!email.includes('@')) {
-      setAuthError('Please enter a valid email address');
+    if (!email.includes("@")) {
+      setAuthError("Please enter a valid email address");
       return false;
     }
     if (!password) {
-      setAuthError('Password is required');
+      setAuthError("Password is required");
       return false;
     }
     if (password.length < 6) {
-      setAuthError('Password must be at least 6 characters');
+      setAuthError("Password must be at least 6 characters");
       return false;
     }
     return true;
@@ -42,29 +48,34 @@ export default function Auth() {
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validateForm()) return;
-    
+
     try {
       setLoading(true);
-      const { error, data } = await supabase.auth.signInWithPassword({ 
-        email, 
-        password 
+      const { error, data } = await supabase.auth.signInWithPassword({
+        email,
+        password,
       });
-      
+
       if (error) throw error;
-      
-      console.log('Sign in successful:', data);
+
+      console.log("Sign in successful:", data);
       toast({
         title: "Welcome back!",
         description: "You've successfully signed in.",
       });
-      navigate('/');
+      navigate("/");
     } catch (error) {
-      console.error('Sign in error:', error);
-      setAuthError(error instanceof Error ? error.message : "An error occurred during sign in");
+      console.error("Sign in error:", error);
+      setAuthError(
+        error instanceof Error
+          ? error.message
+          : "An error occurred during sign in"
+      );
       toast({
         variant: "destructive",
         title: "Error signing in",
-        description: error instanceof Error ? error.message : "An error occurred",
+        description:
+          error instanceof Error ? error.message : "An error occurred",
       });
     } finally {
       setLoading(false);
@@ -74,31 +85,36 @@ export default function Auth() {
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validateForm()) return;
-    
+
     try {
       setLoading(true);
-      const { error, data } = await supabase.auth.signUp({ 
-        email, 
+      const { error, data } = await supabase.auth.signUp({
+        email,
         password,
         options: {
-          emailRedirectTo: window.location.origin
-        }
+          emailRedirectTo: window.location.origin,
+        },
       });
-      
+
       if (error) throw error;
-      
-      console.log('Sign up successful:', data);
+
+      console.log("Sign up successful:", data);
       toast({
         title: "Account created",
         description: "Please check your email for the confirmation link.",
       });
     } catch (error) {
-      console.error('Sign up error:', error);
-      setAuthError(error instanceof Error ? error.message : "An error occurred during sign up");
+      console.error("Sign up error:", error);
+      setAuthError(
+        error instanceof Error
+          ? error.message
+          : "An error occurred during sign up"
+      );
       toast({
         variant: "destructive",
         title: "Error signing up",
-        description: error instanceof Error ? error.message : "An error occurred",
+        description:
+          error instanceof Error ? error.message : "An error occurred",
       });
     } finally {
       setLoading(false);
@@ -106,59 +122,71 @@ export default function Auth() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">PaperTrail AI</CardTitle>
-          <CardDescription className="text-center">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
+      <Card className="w-full max-w-md bg-card">
+        <CardHeader>
+          <CardTitle className="text-2xl font-bold text-card-foreground">
+            Welcome
+          </CardTitle>
+          <CardDescription className="text-muted-foreground">
             Sign in to your account or create a new one
           </CardDescription>
         </CardHeader>
-        <Tabs defaultValue="signin" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="signin">Sign In</TabsTrigger>
-            <TabsTrigger value="signup">Sign Up</TabsTrigger>
-          </TabsList>
-          
-          <TabsContent value="signin">
-            <form onSubmit={handleSignIn}>
-              <CardContent className="space-y-4 pt-4">
+        <CardContent>
+          <Tabs defaultValue="signin" className="w-full">
+            <TabsList className="grid w-full grid-cols-2 bg-muted">
+              <TabsTrigger
+                value="signin"
+                className="data-[state=active]:bg-background"
+              >
+                <LogIn className="w-4 h-4 mr-2" />
+                Sign In
+              </TabsTrigger>
+              <TabsTrigger
+                value="signup"
+                className="data-[state=active]:bg-background"
+              >
+                <UserPlus className="w-4 h-4 mr-2" />
+                Sign Up
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="signin">
+              <form onSubmit={handleSignIn} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
+                  <Label htmlFor="email" className="text-card-foreground">
+                    Email
+                  </Label>
                   <div className="relative">
                     <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                     <Input
                       id="email"
                       type="email"
-                      placeholder="your@email.com"
+                      placeholder="Enter your email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      className="pl-10"
+                      className="pl-10 bg-background text-foreground"
                     />
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="password">Password</Label>
+                  <Label htmlFor="password" className="text-card-foreground">
+                    Password
+                  </Label>
                   <div className="relative">
                     <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                     <Input
                       id="password"
                       type="password"
-                      placeholder="••••••••"
+                      placeholder="Enter your password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="pl-10"
+                      className="pl-10 bg-background text-foreground"
                     />
                   </div>
                 </div>
-                
                 {authError && (
-                  <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded-md text-sm">
-                    {authError}
-                  </div>
+                  <p className="text-sm text-destructive">{authError}</p>
                 )}
-              </CardContent>
-              <CardFooter>
                 <Button type="submit" className="w-full" disabled={loading}>
                   {loading ? (
                     <>
@@ -166,59 +194,54 @@ export default function Auth() {
                       Signing in...
                     </>
                   ) : (
-                    <>
-                      <LogIn className="mr-2 h-4 w-4" />
-                      Sign in
-                    </>
+                    "Sign In"
                   )}
                 </Button>
-              </CardFooter>
-            </form>
-          </TabsContent>
-          
-          <TabsContent value="signup">
-            <form onSubmit={handleSignUp}>
-              <CardContent className="space-y-4 pt-4">
+              </form>
+            </TabsContent>
+            <TabsContent value="signup">
+              <form onSubmit={handleSignUp} className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="signup-email">Email</Label>
+                  <Label
+                    htmlFor="signup-email"
+                    className="text-card-foreground"
+                  >
+                    Email
+                  </Label>
                   <div className="relative">
                     <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                     <Input
                       id="signup-email"
                       type="email"
-                      placeholder="your@email.com"
+                      placeholder="Enter your email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      className="pl-10"
+                      className="pl-10 bg-background text-foreground"
                     />
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="signup-password">Password</Label>
+                  <Label
+                    htmlFor="signup-password"
+                    className="text-card-foreground"
+                  >
+                    Password
+                  </Label>
                   <div className="relative">
                     <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                     <Input
                       id="signup-password"
                       type="password"
-                      placeholder="••••••••"
+                      placeholder="Enter your password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="pl-10"
+                      className="pl-10 bg-background text-foreground"
                     />
                   </div>
                 </div>
-                
                 {authError && (
-                  <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded-md text-sm">
-                    {authError}
-                  </div>
+                  <p className="text-sm text-destructive">{authError}</p>
                 )}
-                
-                <div className="text-sm text-muted-foreground">
-                  By creating an account, you agree to our Terms of Service and Privacy Policy.
-                </div>
-              </CardContent>
-              <CardFooter>
                 <Button type="submit" className="w-full" disabled={loading}>
                   {loading ? (
                     <>
@@ -226,16 +249,18 @@ export default function Auth() {
                       Creating account...
                     </>
                   ) : (
-                    <>
-                      <UserPlus className="mr-2 h-4 w-4" />
-                      Create account
-                    </>
+                    "Sign Up"
                   )}
                 </Button>
-              </CardFooter>
-            </form>
-          </TabsContent>
-        </Tabs>
+              </form>
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+        <CardFooter className="flex justify-center">
+          <p className="text-sm text-muted-foreground">
+            By continuing, you agree to our Terms of Service and Privacy Policy
+          </p>
+        </CardFooter>
       </Card>
     </div>
   );

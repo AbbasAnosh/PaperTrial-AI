@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { supabase } from "@/integrations/supabase/client";
 import { FormTemplate, FormField, FormGuidance } from "@/types/form";
 
 export interface FormGuidance {
@@ -98,13 +98,18 @@ export class FormTemplateService {
   }
 
   static async getFormCategories(): Promise<string[]> {
-    const { data, error } = await supabase
-      .from("form_templates")
-      .select("category")
-      .distinct();
+    try {
+      const { data, error } = await supabase
+        .from("form_templates")
+        .select("category", { count: "exact" })
+        .order("category");
 
-    if (error) throw error;
-    return data?.map((item) => item.category) || [];
+      if (error) throw error;
+      return data.map((item: any) => item.category);
+    } catch (error) {
+      console.error("Error fetching form categories:", error);
+      throw error;
+    }
   }
 
   static async getFormsByCategory(category: string): Promise<FormTemplate[]> {

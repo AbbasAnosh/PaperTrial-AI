@@ -1,28 +1,59 @@
-
-import { Link, useLocation } from 'react-router-dom';
-import { Sidebar } from '@/components/ui/sidebar';
-import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
-import { LogOut, Home, User, FileText, FileCheck } from 'lucide-react';
-import { useAuth } from '@/hooks/useAuth';
-import { useNavigate } from 'react-router-dom';
-import { useToast } from '@/components/ui/use-toast';
+import { Link, useLocation } from "react-router-dom";
+import { Sidebar } from "@/components/ui/sidebar";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { LogOut, Home, User, FileText, FileCheck } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+import { useNavigate } from "react-router-dom";
+import { useToast } from "@/components/ui/use-toast";
+import { useEffect, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
 
 export function AppSidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { signOut } = useAuth();
+  const { signOut, user } = useAuth();
+  const [userName, setUserName] = useState<string>("");
+
+  useEffect(() => {
+    const fetchUserName = async () => {
+      if (!user) return;
+
+      try {
+        const { data, error } = await supabase
+          .from("profiles")
+          .select("first_name, last_name")
+          .eq("id", user.id)
+          .single();
+
+        if (error) throw error;
+        if (data) {
+          setUserName(
+            `${data.first_name} ${data.last_name}`.trim() ||
+              user.email ||
+              "User"
+          );
+        }
+      } catch (error) {
+        console.error("Error fetching user name:", error);
+        setUserName(user.email || "User");
+      }
+    };
+
+    fetchUserName();
+  }, [user]);
 
   const handleSignOut = async () => {
     try {
       await signOut();
-      navigate('/auth');
+      navigate("/auth");
     } catch (error) {
       toast({
         variant: "destructive",
         title: "Error signing out",
-        description: error instanceof Error ? error.message : "An error occurred",
+        description:
+          error instanceof Error ? error.message : "An error occurred",
       });
     }
   };
@@ -44,7 +75,7 @@ export function AppSidebar() {
             </h3>
             <div className="mt-2 space-y-1">
               <Button
-                variant={location.pathname === '/' ? 'secondary' : 'ghost'}
+                variant={location.pathname === "/" ? "secondary" : "ghost"}
                 asChild
                 className="w-full justify-start"
               >
@@ -54,7 +85,7 @@ export function AppSidebar() {
                 </Link>
               </Button>
               <Button
-                variant={location.pathname === '/forms' ? 'secondary' : 'ghost'}
+                variant={location.pathname === "/forms" ? "secondary" : "ghost"}
                 asChild
                 className="w-full justify-start"
               >
@@ -64,7 +95,9 @@ export function AppSidebar() {
                 </Link>
               </Button>
               <Button
-                variant={location.pathname === '/profile' ? 'secondary' : 'ghost'}
+                variant={
+                  location.pathname === "/profile" ? "secondary" : "ghost"
+                }
                 asChild
                 className="w-full justify-start"
               >
@@ -77,6 +110,12 @@ export function AppSidebar() {
           </div>
         </div>
         <div className="p-4 border-t">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center space-x-2">
+              <User className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-medium">{userName}</span>
+            </div>
+          </div>
           <Button variant="outline" className="w-full" onClick={handleSignOut}>
             <LogOut className="mr-2 h-4 w-4" />
             Sign Out

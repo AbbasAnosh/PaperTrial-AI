@@ -1,26 +1,53 @@
-from typing import Dict, Any, Optional, List
-from playwright.async_api import async_playwright, Browser, Page, Locator
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, WebDriverException
+import logging
 import asyncio
+from typing import Dict, Any, Optional
+import json
+import os
 from datetime import datetime
+import backoff
+from tenacity import retry, stop_after_attempt, wait_exponential
 from app.core.supabase_client import SupabaseClient
 
 class BrowserAutomationService:
     def __init__(self):
-        self.browser: Optional[Browser] = None
-        self.context = None
-        self.page: Optional[Page] = None
+        self.driver = None
+        self.logger = logging.getLogger(__name__)
+        self.wait_timeout = 30
+        self.max_retries = 3
+        self.retry_delay = 2
+        self.screenshot_dir = "screenshots"
+        os.makedirs(self.screenshot_dir, exist_ok=True)
         self.supabase = SupabaseClient()
         self.user_profile = None
 
+    @backoff.on_exception(backoff.expo, WebDriverException, max_tries=3)
     async def initialize(self, user_id: Optional[str] = None):
-        """Initialize the browser automation service and load user profile"""
-        playwright = await async_playwright().start()
-        self.browser = await playwright.chromium.launch(headless=True)
-        self.context = await self.browser.new_context()
-        self.page = await self.context.new_page()
-        
-        if user_id:
-            await self._load_user_profile(user_id)
+        """Initialize the browser with retry logic"""
+        try:
+            if self.driver:
+                await self.cleanup()
+
+            options = webdriver.ChromeOptions()
+            options.add_argument('--headless')
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--disable-gpu')
+            options.add_argument('--window-size=1920,1080')
+            
+            self.driver = webdriver.Chrome(options=options)
+            self.driver.set_page_load_timeout(self.wait_timeout)
+            self.logger.info("Browser initialized successfully")
+            
+            if user_id:
+                await self._load_user_profile(user_id)
+        except Exception as e:
+            self.logger.error(f"Failed to initialize browser: {str(e)}", exc_info=True)
+            raise
 
     async def _load_user_profile(self, user_id: str):
         """Load user profile for autofill"""
@@ -28,125 +55,189 @@ class BrowserAutomationService:
         if result.data:
             self.user_profile = result.data
 
-    async def fill_form(self, url: str, form_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Fill a form with the provided data and user profile"""
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    async def fill_form(self, url: str, form_data: Dict[str, Any], user_profile: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Fill a form with the provided data and user profile
+        """
         try:
-            await self.page.goto(url)
+            if not self.driver:
+                await self.initialize()
+
+            self.logger.info(f"Navigating to form URL: {url}")
+            self.driver.get(url)
             
-            # Track form filling progress
-            progress = {
-                "start_time": datetime.now().isoformat(),
-                "steps": [],
-                "status": "in_progress"
-            }
-            
+            # Wait for page load
+            WebDriverWait(self.driver, self.wait_timeout).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+
+            # Take screenshot before filling
+            before_screenshot = self._take_screenshot("before_fill")
+
             # Combine form data with user profile
-            combined_data = self._combine_with_profile(form_data)
+            combined_data = self._combine_data(form_data, user_profile)
             
-            for field, value in combined_data.items():
+            # Track progress
+            progress = {
+                "total_fields": len(combined_data),
+                "filled_fields": 0,
+                "errors": [],
+                "start_time": datetime.now().isoformat()
+            }
+
+            # Fill each field
+            for field_name, value in combined_data.items():
+                try:
+                    await self._fill_field(field_name, value)
+                    progress["filled_fields"] += 1
+                except Exception as e:
+                    error_msg = f"Error filling field {field_name}: {str(e)}"
+                    self.logger.error(error_msg)
+                    progress["errors"].append(error_msg)
+
+            # Take screenshot after filling
+            after_screenshot = self._take_screenshot("after_fill")
+
+            progress.update({
+                "end_time": datetime.now().isoformat(),
+                "screenshots": {
+                    "before": before_screenshot,
+                    "after": after_screenshot
+                }
+            })
+
+            return progress
+
+        except Exception as e:
+            self.logger.error(f"Failed to fill form: {str(e)}", exc_info=True)
+            raise
+
+    async def _fill_field(self, field_name: str, value: Any):
+        """Fill a single form field with retry logic"""
+        for attempt in range(self.max_retries):
+            try:
                 # Try different selectors
                 selectors = [
-                    f'input[name="{field}"]',
-                    f'input[id="{field}"]',
-                    f'textarea[name="{field}"]',
-                    f'textarea[id="{field}"]',
-                    f'select[name="{field}"]',
-                    f'select[id="{field}"]'
+                    (By.NAME, field_name),
+                    (By.ID, field_name),
+                    (By.CSS_SELECTOR, f"[name='{field_name}']"),
+                    (By.XPATH, f"//*[@name='{field_name}']")
                 ]
-                
-                for selector in selectors:
-                    if await self.page.locator(selector).count() > 0:
-                        element = self.page.locator(selector)
-                        await self._fill_element(element, value)
-                        
-                        progress["steps"].append({
-                            "field": field,
-                            "status": "filled",
-                            "timestamp": datetime.now().isoformat(),
-                            "value_source": "user_profile" if field in self.user_profile else "form_data"
-                        })
-                        break
-            
-            progress["status"] = "completed"
-            progress["end_time"] = datetime.now().isoformat()
-            
-            return {
-                "success": True,
-                "progress": progress
-            }
-            
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "progress": progress
+
+                element = None
+                for by, selector in selectors:
+                    try:
+                        element = WebDriverWait(self.driver, 5).until(
+                            EC.presence_of_element_located((by, selector))
+                        )
+                        if element:
+                            break
+                    except TimeoutException:
+                        continue
+
+                if not element:
+                    raise ValueError(f"Field {field_name} not found")
+
+                # Clear existing value
+                element.clear()
+
+                # Handle different input types
+                input_type = element.get_attribute("type")
+                if input_type == "checkbox":
+                    if value:
+                        element.click()
+                elif input_type == "radio":
+                    if value:
+                        element.click()
+                else:
+                    element.send_keys(str(value))
+
+                return
+
+            except Exception as e:
+                if attempt == self.max_retries - 1:
+                    raise
+                self.logger.warning(f"Retry {attempt + 1} for field {field_name}: {str(e)}")
+                await asyncio.sleep(self.retry_delay)
+
+    def _combine_data(self, form_data: Dict[str, Any], user_profile: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Combine form data with user profile data"""
+        combined = form_data.copy()
+        if user_profile:
+            # Map user profile fields to form fields
+            field_mapping = {
+                "name": ["full_name", "name"],
+                "email": ["email", "email_address"],
+                "phone": ["phone", "phone_number", "telephone"],
+                "address": ["address", "street_address"],
+                "city": ["city", "town"],
+                "state": ["state", "province"],
+                "zip": ["zip", "postal_code", "zip_code"]
             }
 
-    def _combine_with_profile(self, form_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Combine form data with user profile data"""
-        if not self.user_profile:
-            return form_data
-            
-        combined = form_data.copy()
-        for field, value in self.user_profile.items():
-            if field not in combined:
-                combined[field] = value
+            for profile_field, form_fields in field_mapping.items():
+                if profile_field in user_profile:
+                    for form_field in form_fields:
+                        if form_field in combined and not combined[form_field]:
+                            combined[form_field] = user_profile[profile_field]
+
         return combined
 
-    async def _fill_element(self, element: Locator, value: Any):
-        """Fill a form element with the appropriate method based on its type"""
-        element_type = await element.get_attribute("type")
-        
-        if element_type == "checkbox":
-            if value:
-                await element.check()
-        elif element_type == "radio":
-            await element.check()
-        elif element_type == "select":
-            await element.select_option(value)
-        else:
-            await element.fill(str(value))
-
-    async def submit_form(self) -> Dict[str, Any]:
-        """Submit the form and track the submission"""
+    def _take_screenshot(self, prefix: str) -> str:
+        """Take a screenshot and return the file path"""
         try:
-            # Try to find and click submit button
-            submit_selectors = [
-                'input[type="submit"]',
-                'button[type="submit"]',
-                'button:has-text("Submit")',
-                'button:has-text("Send")',
-                'button:has-text("Next")',
-                'button:has-text("Continue")'
-            ]
-            
-            for selector in submit_selectors:
-                if await self.page.locator(selector).count() > 0:
-                    await self.page.click(selector)
-                    break
-            
-            # Wait for navigation or form submission
-            await self.page.wait_for_load_state("networkidle")
-            
-            # Capture submission result
-            submission_result = {
-                "success": True,
-                "submission_time": datetime.now().isoformat(),
-                "final_url": self.page.url,
-                "page_title": await self.page.title()
-            }
-            
-            return submission_result
-            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{prefix}_{timestamp}.png"
+            filepath = os.path.join(self.screenshot_dir, filename)
+            self.driver.save_screenshot(filepath)
+            return filepath
         except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }
+            self.logger.error(f"Failed to take screenshot: {str(e)}", exc_info=True)
+            return ""
 
-    async def close(self):
-        """Close the browser and cleanup"""
-        if self.context:
-            await self.context.close()
-        if self.browser:
-            await self.browser.close() 
+    async def submit_form(self, submit_button_selector: Optional[str] = None) -> bool:
+        """Submit the form with retry logic"""
+        try:
+            if not self.driver:
+                raise ValueError("Browser not initialized")
+
+            # Try different submit button selectors
+            selectors = [
+                submit_button_selector,
+                "input[type='submit']",
+                "button[type='submit']",
+                "//button[contains(text(), 'Submit')]",
+                "//input[@value='Submit']"
+            ]
+
+            for selector in selectors:
+                try:
+                    if selector.startswith("//"):
+                        element = WebDriverWait(self.driver, 5).until(
+                            EC.element_to_be_clickable((By.XPATH, selector))
+                        )
+                    else:
+                        element = WebDriverWait(self.driver, 5).until(
+                            EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                        )
+                    element.click()
+                    return True
+                except TimeoutException:
+                    continue
+
+            raise ValueError("Submit button not found")
+
+        except Exception as e:
+            self.logger.error(f"Failed to submit form: {str(e)}", exc_info=True)
+            return False
+
+    async def cleanup(self):
+        """Clean up browser resources"""
+        try:
+            if self.driver:
+                self.driver.quit()
+                self.driver = None
+                self.logger.info("Browser cleanup completed")
+        except Exception as e:
+            self.logger.error(f"Error during cleanup: {str(e)}", exc_info=True) 

@@ -19,6 +19,10 @@ const Index = () => {
   const { toast } = useToast();
   const { user, signOut } = useAuth();
   const [uploading, setUploading] = useState(false);
+  const [currentStep, setCurrentStep] = useState(-1);
+  const [processingStatus, setProcessingStatus] = useState<
+    "wait" | "process" | "finish" | "error"
+  >("wait");
 
   const handleSignOut = async () => {
     try {
@@ -37,6 +41,8 @@ const Index = () => {
   const handleFileUpload = async (file: File) => {
     try {
       setUploading(true);
+      setCurrentStep(0);
+      setProcessingStatus("process");
 
       const userId = user?.id;
       if (!userId) throw new Error("User not authenticated");
@@ -48,6 +54,7 @@ const Index = () => {
 
       if (uploadError) throw uploadError;
 
+      setCurrentStep(1);
       const { error: dbError } = await supabase.from("documents").insert({
         file_name: file.name,
         file_path: filePath,
@@ -59,6 +66,7 @@ const Index = () => {
 
       if (dbError) throw dbError;
 
+      setCurrentStep(2);
       // Create a submission record
       const { error: submissionError } = await supabase
         .from("submissions")
@@ -70,11 +78,14 @@ const Index = () => {
 
       if (submissionError) throw submissionError;
 
+      setCurrentStep(3);
+      setProcessingStatus("finish");
       toast({
         title: "Success!",
         description: "Document uploaded and queued for processing",
       });
     } catch (error) {
+      setProcessingStatus("error");
       toast({
         variant: "destructive",
         title: "Error uploading document",
@@ -145,7 +156,10 @@ const Index = () => {
                   onFileSelect={handleFileUpload}
                   disabled={uploading}
                 />
-                <ProcessingStatus />
+                <ProcessingStatus
+                  currentStep={currentStep}
+                  status={processingStatus}
+                />
               </TabsContent>
 
               <TabsContent value="history" className="mt-6">

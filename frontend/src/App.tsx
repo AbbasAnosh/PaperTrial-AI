@@ -1,91 +1,88 @@
-import { Toaster } from "@/components/ui/toaster";
-import { Toaster as Sonner } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { AuthProvider, useAuth } from "@/hooks/useAuth";
-import { ThemeProvider } from "@/components/theme-provider";
-import Index from "./pages/Index";
-import Auth from "./pages/Auth";
-import Profile from "./pages/Profile";
-import Forms from "./pages/Forms";
-import FormAdmin from "./pages/FormAdmin";
-import NotFound from "./pages/NotFound";
+import React, { useState } from "react";
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+} from "react-router-dom";
+import { Toaster } from "react-hot-toast";
+import { AuthProvider } from "./contexts/AuthContext";
+import { ProtectedRoute } from "./components/ProtectedRoute";
+import Login from "./components/Login";
+import Register from "./components/Register";
+import { FormUpload } from "./components/FormUpload";
+import { FormPreview } from "./components/FormPreview";
+import { QuestionAnswer } from "./components/QuestionAnswer";
+import { toast } from "react-hot-toast";
 
-const queryClient = new QueryClient();
+const App: React.FC = () => {
+  const [currentStep, setCurrentStep] = useState<"upload" | "preview" | "qa">(
+    "upload"
+  );
+  const [formId, setFormId] = useState<string | null>(null);
+  const [formFields, setFormFields] = useState<any[]>([]);
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+  const handleUploadComplete = (formData: any) => {
+    setFormId(formData.id);
+    setFormFields(formData.fields);
+    setCurrentStep("preview");
+  };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full"></div>
-      </div>
-    );
-  }
+  const handleUploadError = (error: string) => {
+    toast.error(error);
+  };
 
-  if (!user) {
-    return <Navigate to="/auth" />;
-  }
+  const handleStartQA = () => {
+    setCurrentStep("qa");
+  };
 
-  return <>{children}</>;
-}
+  const handleEditFields = () => {
+    setCurrentStep("preview");
+  };
 
-const App = () => (
-  <ThemeProvider
-    attribute="class"
-    defaultTheme="system"
-    enableSystem
-    disableTransitionOnChange
-  >
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <AuthProvider>
-          <Toaster />
-          <Sonner />
-          <BrowserRouter>
-            <Routes>
-              <Route path="/auth" element={<Auth />} />
-              <Route
-                path="/"
-                element={
-                  <ProtectedRoute>
-                    <Index />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/profile"
-                element={
-                  <ProtectedRoute>
-                    <Profile />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/forms"
-                element={
-                  <ProtectedRoute>
-                    <Forms />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/form-admin"
-                element={
-                  <ProtectedRoute>
-                    <FormAdmin />
-                  </ProtectedRoute>
-                }
-              />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </BrowserRouter>
-        </AuthProvider>
-      </TooltipProvider>
-    </QueryClientProvider>
-  </ThemeProvider>
-);
+  return (
+    <AuthProvider>
+      <Router>
+        <div className="min-h-screen bg-background">
+          <Toaster position="top-right" />
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            <Route
+              path="/"
+              element={
+                <ProtectedRoute>
+                  {currentStep === "upload" && (
+                    <FormUpload
+                      onUploadComplete={handleUploadComplete}
+                      onError={handleUploadError}
+                    />
+                  )}
+                  {currentStep === "preview" && (
+                    <FormPreview
+                      formId={formId!}
+                      fields={formFields}
+                      onStartQA={handleStartQA}
+                      onEditFields={handleEditFields}
+                    />
+                  )}
+                  {currentStep === "qa" && (
+                    <QuestionAnswer
+                      formId={formId!}
+                      fields={formFields}
+                      onComplete={() => setCurrentStep("upload")}
+                      onCancel={() => setCurrentStep("preview")}
+                    />
+                  )}
+                </ProtectedRoute>
+              }
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </div>
+      </Router>
+    </AuthProvider>
+  );
+};
 
 export default App;

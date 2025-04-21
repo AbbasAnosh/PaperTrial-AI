@@ -1,55 +1,63 @@
+import React from "react";
+import { Steps, Card } from "antd";
+import {
+  UploadOutlined,
+  LoadingOutlined,
+  CheckCircleOutlined,
+  FileTextOutlined,
+  CheckOutlined,
+} from "@ant-design/icons";
 
-import { CircleIcon, CheckCircleIcon } from 'lucide-react';
-import { cn } from '@/lib/utils';
+const { Step } = Steps;
 
-interface Step {
-  name: string;
-  status: 'upcoming' | 'current' | 'completed';
+interface ProcessingStatusProps {
+  currentStep?: number;
+  status?: "wait" | "process" | "finish" | "error";
 }
 
-const steps: Step[] = [
-  { name: 'Document Upload', status: 'completed' },
-  { name: 'Processing', status: 'current' },
-  { name: 'Form Generation', status: 'upcoming' },
-  { name: 'Review & Submit', status: 'upcoming' },
-];
+export function ProcessingStatus({
+  currentStep = -1,
+  status = "wait",
+}: ProcessingStatusProps) {
+  const steps = [
+    {
+      title: "Upload",
+      icon: currentStep === 0 ? <LoadingOutlined /> : <UploadOutlined />,
+      status:
+        currentStep > 0 ? "finish" : currentStep === 0 ? "process" : "wait",
+    },
+    {
+      title: "Processing",
+      icon: currentStep === 1 ? <LoadingOutlined /> : <CheckCircleOutlined />,
+      status:
+        currentStep > 1 ? "finish" : currentStep === 1 ? "process" : "wait",
+    },
+    {
+      title: "Form Generation",
+      icon: currentStep === 2 ? <LoadingOutlined /> : <FileTextOutlined />,
+      status:
+        currentStep > 2 ? "finish" : currentStep === 2 ? "process" : "wait",
+    },
+    {
+      title: "Review & Submit",
+      icon: currentStep === 3 ? <LoadingOutlined /> : <CheckOutlined />,
+      status:
+        currentStep > 3 ? "finish" : currentStep === 3 ? "process" : "wait",
+    },
+  ];
 
-export function ProcessingStatus() {
   return (
-    <div className="w-full max-w-2xl mx-auto mt-8">
-      <nav aria-label="Progress">
-        <ol role="list" className="space-y-4 md:flex md:space-x-8 md:space-y-0">
-          {steps.map((step, stepIdx) => (
-            <li key={step.name} className="md:flex-1">
-              <div className={cn(
-                "group flex flex-col border-l-4 py-2 pl-4 md:border-l-0 md:border-t-4 md:pb-0 md:pl-0 md:pt-4",
-                step.status === 'upcoming' ? "border-gray-200" :
-                step.status === 'current' ? "border-blue-600" :
-                "border-green-600"
-              )}>
-                <span className="text-sm font-medium">
-                  {step.status === 'completed' ? (
-                    <CheckCircleIcon className="h-5 w-5 text-green-600" />
-                  ) : (
-                    <CircleIcon className={cn(
-                      "h-5 w-5",
-                      step.status === 'current' ? "text-blue-600" : "text-gray-400"
-                    )} />
-                  )}
-                </span>
-                <span className={cn(
-                  "text-sm font-medium",
-                  step.status === 'upcoming' ? "text-gray-500" :
-                  step.status === 'current' ? "text-blue-600" :
-                  "text-green-600"
-                )}>
-                  {step.name}
-                </span>
-              </div>
-            </li>
-          ))}
-        </ol>
-      </nav>
-    </div>
+    <Card style={{ marginTop: 24 }}>
+      <Steps current={currentStep} status={status}>
+        {steps.map((step, index) => (
+          <Step
+            key={index}
+            title={step.title}
+            icon={step.icon}
+            status={step.status}
+          />
+        ))}
+      </Steps>
+    </Card>
   );
 }

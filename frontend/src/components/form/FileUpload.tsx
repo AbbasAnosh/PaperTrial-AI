@@ -6,12 +6,27 @@ import { Progress } from "@/components/ui/progress";
 import { Upload, FileText, X } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/lib/supabase";
+import { supabase } from "@/integrations/supabase/client";
+import { api } from "@/integrations/api/client";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+interface Document {
+  id: string;
+  status: string;
+  filename: string;
+  extracted_fields?: Record<string, any>;
+}
+
+interface ProcessResponse {
+  document: Document;
+  message: string;
+}
+
+interface StatusResponse {
+  document: Document;
+}
 
 interface FileUploadProps {
-  onFileProcessed: (data: any) => void;
+  onFileProcessed: (data: Document) => void;
   onError: (error: string) => void;
   formType?: string;
 }
@@ -45,7 +60,7 @@ export const FileUpload = ({
           const newStatus = payload.new.status;
           if (newStatus === "processed") {
             setUploadProgress(100);
-            onFileProcessed(payload.new);
+            onFileProcessed(payload.new as Document);
             toast({
               title: "Success",
               description: "PDF processed successfully",
@@ -97,6 +112,10 @@ export const FileUpload = ({
 
   const processFile = async (file: File) => {
     try {
+      if (!user) {
+        throw new Error("Please sign in to upload files");
+      }
+
       setUploadProgress(0);
 
       // Create FormData for file upload
@@ -106,37 +125,25 @@ export const FileUpload = ({
         formData.append("form_type", formType);
       }
 
-      // Upload file to FastAPI backend
-      const response = await fetch(`${API_URL}/api/pdf/process`, {
-        method: "POST",
-        body: formData,
-        credentials: "include",
-      });
+      // Upload file using our API client
+      const response = await api.post<ProcessResponse>(
+        "/api/pdf/process",
+        formData,
+        {
+          isFormData: true,
+        }
+      );
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to process PDF");
-      }
-
-      const data = await response.json();
-      setDocumentId(data.document.id);
+      setDocumentId(response.document.id);
       setUploadProgress(50); // Initial processing started
 
       // Start polling for status updates
       const pollStatus = async () => {
         try {
-          const statusResponse = await fetch(
-            `${API_URL}/api/pdf/${data.document.id}`,
-            {
-              credentials: "include",
-            }
+          const statusData = await api.get<StatusResponse>(
+            `/api/pdf/${response.document.id}`
           );
 
-          if (!statusResponse.ok) {
-            throw new Error("Failed to get document status");
-          }
-
-          const statusData = await statusResponse.json();
           if (statusData.document.status === "processed") {
             setUploadProgress(100);
             onFileProcessed(statusData.document);
@@ -153,7 +160,8 @@ export const FileUpload = ({
           );
           toast({
             title: "Error",
-            description: "Failed to process PDF",
+            description:
+              error instanceof Error ? error.message : "Failed to process PDF",
             variant: "destructive",
           });
         }
@@ -161,11 +169,12 @@ export const FileUpload = ({
 
       pollStatus();
     } catch (error) {
-      console.error("Error processing PDF:", error);
+      setUploadProgress(0);
       onError(error instanceof Error ? error.message : "Failed to process PDF");
       toast({
         title: "Error",
-        description: "Failed to process PDF",
+        description:
+          error instanceof Error ? error.message : "Failed to process PDF",
         variant: "destructive",
       });
     }
@@ -181,55 +190,42 @@ export const FileUpload = ({
     <Card className="p-6">
       <div
         {...getRootProps()}
-        className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors
-          ${
-            isDragActive
-              ? "border-primary bg-primary/5"
-              : "border-gray-300 hover:border-primary"
-          }`}
+        className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
+          isDragActive ? "border-primary bg-primary/5" : "border-muted"
+        }`}
       >
         <input {...getInputProps()} />
-        {!file ? (
-          <div className="space-y-4">
-            <Upload className="mx-auto h-12 w-12 text-gray-400" />
-            <div>
-              <p className="text-lg font-medium">
-                {isDragActive
-                  ? "Drop the PDF here"
-                  : "Drag & drop a PDF file here"}
-              </p>
-              <p className="text-sm text-gray-500">or click to select a file</p>
+        {file ? (
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <FileText className="h-5 w-5" />
+              <span>{file.name}</span>
             </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                removeFile();
+              }}
+            >
+              <X className="h-4 w-4" />
+            </Button>
           </div>
         ) : (
-          <div className="space-y-4">
-            <div className="flex items-center justify-center space-x-2">
-              <FileText className="h-8 w-8 text-primary" />
-              <span className="font-medium">{file.name}</span>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  removeFile();
-                }}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-            {uploadProgress > 0 && uploadProgress < 100 && (
-              <div className="space-y-2">
-                <Progress value={uploadProgress} className="w-full" />
-                <p className="text-sm text-gray-500">
-                  {uploadProgress < 50
-                    ? "Uploading PDF..."
-                    : "Processing PDF..."}
-                </p>
-              </div>
-            )}
+          <div className="space-y-2">
+            <Upload className="mx-auto h-12 w-12 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              Drag and drop your PDF here, or click to select
+            </p>
           </div>
         )}
       </div>
+      {uploadProgress > 0 && (
+        <div className="mt-4">
+          <Progress value={uploadProgress} className="h-2" />
+        </div>
+      )}
     </Card>
   );
 };

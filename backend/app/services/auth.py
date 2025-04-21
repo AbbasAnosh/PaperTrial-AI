@@ -1,10 +1,16 @@
 from typing import Dict, Any, Optional
 from datetime import datetime
-from app.core.supabase_client import SupabaseClient
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from app.core.supabase_client import get_supabase_client
+from app.core.config import settings
+
+security = HTTPBearer()
 
 class AuthService:
     def __init__(self):
-        self.supabase = SupabaseClient()
+        # Use the anon key for client-side auth
+        self.supabase = get_supabase_client()
 
     async def authenticate_user(self, email: str, password: str) -> Optional[Dict[str, Any]]:
         """Authenticate user with email and password using Supabase Auth"""
@@ -57,9 +63,26 @@ class AuthService:
         try:
             # Get user from session token
             user = self.supabase.auth.get_user(token)
+            if not user:
+                raise Exception("Invalid token")
+                
             return {
-                "sub": user.id,
-                "email": user.email
+                "sub": user.user.id,
+                "email": user.user.email,
+                "name": user.user.user_metadata.get("name")
             }
-        except Exception:
-            raise Exception("Invalid token") 
+        except Exception as e:
+            print(f"Token verification error: {str(e)}")  # Add logging
+            raise Exception("Invalid token")
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict[str, Any]:
+    """Get current user from request header token"""
+    try:
+        auth_service = AuthService()
+        return auth_service.verify_token(credentials.credentials)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) 

@@ -1,5 +1,5 @@
 import { FormTemplate, FormField } from "@/types/form";
-import { supabase } from "@/lib/supabase";
+import { supabase } from "@/integrations/supabase/client";
 
 export class AIService {
   static async analyzeFormData(

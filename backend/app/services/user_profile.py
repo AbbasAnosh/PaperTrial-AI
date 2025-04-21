@@ -7,6 +7,7 @@ import uuid
 from app.database import get_db
 from app.models.user import UserInDB
 from app.models.document import DocumentInDB
+from app.models.user_profile import UserProfileCreate, UserProfileUpdate, UserProfileInDB
 
 class UserProfileService:
     def __init__(self):
@@ -15,45 +16,33 @@ class UserProfileService:
         self.upload_dir = "uploads"
         self.db = get_db()
 
-    async def get_profile(self, user_id: str) -> Dict[str, Any]:
-        """Get user profile with all associated data"""
-        try:
-            # Get base profile
-            profile = await self.supabase.table("profiles").select("*").eq("user_id", user_id).single().execute()
-            
-            if not profile.data:
-                return self._create_default_profile(user_id)
-            
-            # Get documents
-            documents = await self.supabase.table("documents").select("*").eq("user_id", user_id).execute()
-            profile.data["documents"] = documents.data
-            
-            # Get form history
-            history = await self.supabase.table("form_history").select("*").eq("user_id", user_id).execute()
-            profile.data["form_history"] = history.data
-            
-            return profile.data
-        except Exception as e:
-            raise Exception(f"Failed to get profile: {str(e)}")
+    async def get_profile(self, user_id: str) -> Optional[UserProfileInDB]:
+        """Get user profile by user ID"""
+        response = await self.db.table('user_profiles').select('*').eq('user_id', user_id).single().execute()
+        return response.data
 
-    async def update_profile(self, user_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Update user profile with validation"""
-        try:
-            # Validate data using AI
-            validation_result = await self._validate_profile_data(data)
-            if not validation_result["is_valid"]:
-                raise ValueError(f"Profile validation failed: {validation_result['errors']}")
-            
-            # Update profile
-            result = await self.supabase.table("profiles").upsert({
-                "user_id": user_id,
-                **data,
-                "updated_at": datetime.now().isoformat()
-            }).execute()
-            
-            return result.data[0]
-        except Exception as e:
-            raise Exception(f"Failed to update profile: {str(e)}")
+    async def update_profile(self, user_id: str, profile_data: UserProfileUpdate) -> UserProfileInDB:
+        """Update user profile"""
+        update_data = {
+            **profile_data.dict(exclude_unset=True),
+            'updated_at': datetime.utcnow().isoformat()
+        }
+
+        # Check if profile exists
+        existing = await self.get_profile(user_id)
+        if not existing:
+            # Create new profile
+            create_data = {
+                'user_id': user_id,
+                'created_at': datetime.utcnow().isoformat(),
+                **update_data
+            }
+            response = await self.db.table('user_profiles').insert(create_data).execute()
+        else:
+            # Update existing profile
+            response = await self.db.table('user_profiles').update(update_data).eq('user_id', user_id).execute()
+
+        return response.data[0]
 
     async def upload_document(self, user_id: str, file_data: bytes, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """Upload and store a document"""
@@ -170,35 +159,20 @@ class UserProfileService:
         
         return await self.get_user_profile(email)
 
-    async def get_user_documents(self, email: str) -> List[Dict]:
+    async def get_user_documents(self, user_id: str) -> List[dict]:
         """Get all documents for a user"""
-        response = await self.db.table('documents').select('*').eq('user_email', email).order('created_at', desc=True)
-        documents = response.data
-        
-        return [
-            {
-                "id": doc["id"],
-                "filename": doc["filename"],
-                "upload_date": doc["created_at"],
-                "status": doc["status"],
-                "extracted_fields": doc.get("extracted_fields"),
-                "submission_history": doc.get("submission_history", [])
-            }
-            for doc in documents
-        ]
+        response = await self.db.table('documents').select('*').eq('user_id', user_id).execute()
+        return response.data
 
-    async def get_document(self, email: str, document_id: str) -> Dict:
-        """Get a specific document by ID"""
-        response = await self.db.table('documents').select('*').eq('id', document_id).eq('user_email', email).single()
-        if not response.data:
-            raise Exception("Document not found")
-        
-        doc = response.data
-        return {
-            "id": doc["id"],
-            "filename": doc["filename"],
-            "upload_date": doc["created_at"],
-            "status": doc["status"],
-            "extracted_fields": doc.get("extracted_fields"),
-            "submission_history": doc.get("submission_history", [])
-        } 
+    async def delete_document(self, user_id: str, document_id: str) -> None:
+        """Delete a document"""
+        # First get the document to verify ownership
+        doc = await self.db.table('documents').select('*').eq('id', document_id).eq('user_id', user_id).single().execute()
+        if not doc.data:
+            raise Exception("Document not found or access denied")
+
+        # Delete from storage
+        await self.db.storage.from_('documents').remove([doc.data['file_path']])
+
+        # Delete from database
+        await self.db.table('documents').delete().eq('id', document_id).execute() 
