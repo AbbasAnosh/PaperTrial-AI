@@ -1,78 +1,150 @@
 """
-Paper Trail Automator API
+Main FastAPI application module.
 
-This is the main application module that sets up the FastAPI application,
-configures middleware, and includes all API routers.
+This module initializes and configures the FastAPI application with all routes,
+middleware, and OpenAPI documentation.
 """
 
-from fastapi import FastAPI, Request, Response, status
+import os
+from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.security import HTTPBearer
-from starlette.middleware.sessions import SessionMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.exceptions import RequestValidationError
-from fastapi.websockets import WebSocket
-from typing import Callable, Dict, Any, Set
-import logging
-import time
-import secrets
-import traceback
+from fastapi.openapi.utils import get_openapi
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.core.errors import setup_exception_handlers
-
-# Import routers from routes directory
-from app.routes.auth import router as auth_router
-from app.routes.users import router as users_router
-from app.routes.forms import router as forms_router
-from app.routes.tasks import router as tasks_router
-from app.routes.field_mapping import router as field_mapping_router
-from app.routes.ml import router as ml_router
-from app.routes.websocket import router as websocket_router
-from app.routes.pdf import router as pdf_router
+from app.core.logging import setup_logging, get_logger
+from app.core.monitoring import MetricsMiddleware, SystemMetrics, analytics
+from app.routes import auth, users, forms
+from app.docs.api_examples import API_EXAMPLES, WEBHOOK_DOCS
+import prometheus_client
+from prometheus_client import make_asgi_app
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+setup_logging(
+    log_level=settings.LOG_LEVEL,
+    log_file=settings.LOG_FILE,
+    log_format=settings.LOG_FORMAT
 )
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
-# Security middleware
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Add security headers to all responses"""
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        response = await call_next(request)
-        response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        return response
-
-class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Rate limiting middleware"""
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        if settings.RATE_LIMIT_ENABLED:
-            # Implement rate limiting logic here
-            # This is a placeholder - you should implement proper rate limiting
-            # using Redis or another storage backend
-            pass
-        return await call_next(request)
-
-# Create FastAPI app
 app = FastAPI(
-    title=settings.PROJECT_NAME,
-    version=settings.VERSION,
-    description=settings.DESCRIPTION
+    title="Paper Trail Automator API",
+    description="""
+    # Paper Trail Automator API Documentation
+
+    This API provides endpoints for managing form templates, processing documents,
+    and automating form submissions.
+
+    ## Features
+
+    - Form template management
+    - PDF document processing
+    - Form submission handling
+    - User authentication and authorization
+    - Real-time status updates
+    - Webhook notifications
+
+    ## Getting Started
+
+    1. Register a new user account
+    2. Create form templates
+    3. Process documents
+    4. Submit forms
+    5. Monitor status
+
+    ## Authentication
+
+    All API endpoints except registration and login require authentication.
+    Include the JWT token in the Authorization header:
+
+    ```
+    Authorization: Bearer <token>
+    ```
+
+    ## Rate Limiting
+
+    - Authenticated users: 100 requests per minute
+    - Anonymous users: 20 requests per minute
+    - IP-based rate limiting: 1000 requests per hour
+
+    ## Pagination
+
+    List endpoints support pagination using query parameters:
+
+    - `page`: Page number (1-based)
+    - `per_page`: Items per page (default: 20, max: 100)
+
+    Response includes:
+    - `items`: List of items
+    - `total`: Total number of items
+    - `page`: Current page
+    - `per_page`: Items per page
+    - `pages`: Total number of pages
+
+    ## Filtering and Sorting
+
+    List endpoints support filtering and sorting:
+
+    ```
+    GET /api/v1/forms/templates?status=active&sort=-created_at
+    ```
+
+    Filter parameters:
+    - `status`: Filter by status
+    - `search`: Search in name and description
+    - `created_after`: Filter by creation date
+    - `created_before`: Filter by creation date
+
+    Sort parameters:
+    - Prefix with `-` for descending order
+    - Available fields: created_at, updated_at, name, status
+
+    ## WebSocket Support
+
+    Real-time updates are available via WebSocket connections:
+
+    ```javascript
+    const ws = new WebSocket('wss://api.example.com/ws');
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        console.log('Update:', data);
+    };
+    ```
+
+    ## Error Handling
+
+    All errors follow a standard format:
+
+    ```json
+    {
+        "error": {
+            "code": "ERROR_CODE",
+            "message": "Human readable message",
+            "details": {}
+        }
+    }
+    ```
+
+    Common error codes:
+    - `UNAUTHORIZED`: Authentication required
+    - `FORBIDDEN`: Insufficient permissions
+    - `NOT_FOUND`: Resource not found
+    - `VALIDATION_ERROR`: Invalid input data
+    - `RATE_LIMITED`: Too many requests
+    - `INTERNAL_ERROR`: Server error
+
+    ## Examples
+
+    See the interactive examples in the OpenAPI documentation for each endpoint.
+    """,
+    version="1.0.0",
+    docs_url=None,
+    redoc_url=None
 )
 
-# Add middleware
-app.add_middleware(SecurityHeadersMiddleware)
-app.add_middleware(RateLimitMiddleware)
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.ALLOWED_HOSTS)
-app.add_middleware(GZipMiddleware, minimum_size=1000)
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -80,88 +152,109 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=settings.SECRET_KEY,
-    session_cookie="session",
-    max_age=settings.SESSION_EXPIRE_MINUTES * 60,
-    same_site="lax",
-    https_only=settings.ENVIRONMENT == "production"
-)
 
-# Global exception handler
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Global error: {str(exc)}")
-    logger.error(traceback.format_exc())
-    
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "detail": "An unexpected error occurred. Please try again later.",
-            "type": "internal_error"
-        }
+# Add metrics middleware
+app.add_middleware(MetricsMiddleware)
+
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Mount Prometheus metrics
+metrics_app = make_asgi_app()
+app.mount("/metrics", metrics_app)
+
+# Include routers
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
+app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
+app.include_router(forms.router, prefix="/api/v1/forms", tags=["Forms"])
+
+# Set up exception handlers
+setup_exception_handlers(app)
+
+# Custom OpenAPI schema
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
     )
 
-# Validation error handler
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Handle validation errors"""
-    return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": exc.errors()}
+    # Add examples to endpoints
+    for path in openapi_schema["paths"]:
+        for method in openapi_schema["paths"][path]:
+            endpoint = openapi_schema["paths"][path][method]
+            tag = endpoint.get("tags", [""])[0].lower()
+            operation_id = endpoint.get("operationId", "").lower()
+
+            if tag in API_EXAMPLES and operation_id in API_EXAMPLES[tag]:
+                example = API_EXAMPLES[tag][operation_id]
+                if "requestBody" in endpoint:
+                    endpoint["requestBody"]["content"] = {
+                        "application/json": {
+                            "example": example.get("example", {})
+                        }
+                    }
+                if "responses" in endpoint:
+                    for status in endpoint["responses"]:
+                        if "content" in endpoint["responses"][status]:
+                            endpoint["responses"][status]["content"] = {
+                                "application/json": {
+                                    "example": example.get("response", {})
+                                }
+                            }
+
+    # Add webhook documentation
+    openapi_schema["components"]["schemas"]["WebhookEvent"] = {
+        "type": "object",
+        "properties": {
+            "event": {"type": "string", "enum": list(WEBHOOK_DOCS["events"].keys())},
+            "timestamp": {"type": "string", "format": "date-time"},
+            "data": {"type": "object"}
+        },
+        "example": WEBHOOK_DOCS["events"]["form.submitted"]["payload"]
+    }
+
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
+
+# Custom documentation UI
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html():
+    return get_swagger_ui_html(
+        openapi_url="/openapi.json",
+        title=f"{app.title} - Swagger UI",
+        oauth2_redirect_url="/docs/oauth2-redirect",
+        swagger_js_url="/static/swagger-ui-bundle.js",
+        swagger_css_url="/static/swagger-ui.css",
     )
 
-# WebSocket connection manager
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: Dict[str, Set[WebSocket]] = {}
-
-    async def connect(self, websocket: WebSocket, form_id: str):
-        await websocket.accept()
-        if form_id not in self.active_connections:
-            self.active_connections[form_id] = set()
-        self.active_connections[form_id].add(websocket)
-        logger.info(f"New WebSocket connection for form {form_id}")
-
-    def disconnect(self, websocket: WebSocket, form_id: str):
-        if form_id in self.active_connections:
-            self.active_connections[form_id].remove(websocket)
-            if not self.active_connections[form_id]:
-                del self.active_connections[form_id]
-        logger.info(f"WebSocket disconnected for form {form_id}")
-
-    async def broadcast(self, form_id: str, message: dict):
-        if form_id in self.active_connections:
-            for connection in self.active_connections[form_id]:
-                try:
-                    await connection.send_json(message)
-                except Exception as e:
-                    logger.error(f"Error broadcasting message: {str(e)}")
-
-manager = ConnectionManager()
-
-# Include routers with correct prefixes
-app.include_router(auth_router, prefix="/api/v1")
-app.include_router(users_router, prefix="/api/v1")
-app.include_router(forms_router, prefix="/api/v1")
-app.include_router(tasks_router, prefix="/api/v1")
-app.include_router(field_mapping_router, prefix="/api/v1/field-mappings")
-app.include_router(ml_router, prefix="/api/v1")
-app.include_router(websocket_router, prefix="/api/v1")
-app.include_router(pdf_router, prefix="/api/v1")
-
+# Health check endpoint
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    """Health check endpoint that returns system status."""
+    return SystemMetrics.get_health_status()
 
+# Analytics endpoint
+@app.get("/analytics")
+async def get_analytics():
+    """Get usage analytics."""
+    return analytics.get_analytics()
+
+# Startup event
 @app.on_event("startup")
 async def startup_event():
-    """Initialize application on startup"""
-    logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+    """Initialize application on startup."""
+    logger.info(f"Starting {app.title} v{app.version}")
     logger.info(f"Environment: {settings.ENVIRONMENT}")
 
+# Shutdown event
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Cleanup on shutdown"""
-    logger.info(f"Shutting down {settings.APP_NAME}") 
+    """Cleanup on shutdown."""
+    logger.info(f"Shutting down {app.title}") 

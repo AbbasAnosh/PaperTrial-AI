@@ -1,164 +1,169 @@
-from pydantic_settings import BaseSettings
-from typing import List, Optional, Dict, Any
-from dotenv import load_dotenv
+"""
+Configuration module.
+
+This module handles all configuration settings for the application,
+including environment-specific settings and feature flags.
+"""
+
 import os
-import logging
-from functools import lru_cache
-from pydantic import validator, Field
-import secrets
-
-# Load environment variables from .env file
-load_dotenv()
-
-# Configure logging
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
+from typing import List, Optional
+from pydantic import BaseSettings, PostgresDsn, RedisDsn, validator
+from pathlib import Path
 
 class Settings(BaseSettings):
-    """Application settings"""
+    """Application settings."""
     
     # Application
-    APP_NAME: str = Field(default="Paper Trail Automator", env="APP_NAME")
-    APP_VERSION: str = Field(default="1.0.0", env="APP_VERSION")
-    ENVIRONMENT: str = Field(default="development", env="ENVIRONMENT")
-    DEBUG: bool = Field(default=False, env="DEBUG")
-    
-    # API
+    APP_NAME: str = "Paper Trail Automator"
+    APP_VERSION: str = "1.0.0"
+    ENVIRONMENT: str = "development"
+    DEBUG: bool = False
     API_V1_STR: str = "/api/v1"
-    PROJECT_NAME: str = "Paper Trail Automator API"
     
     # Security
-    SECRET_KEY: str = Field(default_factory=lambda: secrets.token_urlsafe(32), env="SECRET_KEY")
-    JWT_SECRET: str = Field(..., env="JWT_SECRET")
-    JWT_ALGORITHM: str = Field(default="HS256", env="JWT_ALGORITHM")
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=60 * 24 * 7, env="ACCESS_TOKEN_EXPIRE_MINUTES")  # 7 days
+    SECRET_KEY: str
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-    SESSION_EXPIRE_MINUTES: int = Field(default=60 * 24, env="SESSION_EXPIRE_MINUTES")  # 1 day
+    CORS_ORIGINS: List[str] = ["http://localhost:3000"]
     
-    # Hosts
-    ALLOWED_HOSTS: List[str] = Field(
-        default=["*"],
-        env="ALLOWED_HOSTS"
-    )
+    # Database
+    POSTGRES_SERVER: str
+    POSTGRES_USER: str
+    POSTGRES_PASSWORD: str
+    POSTGRES_DB: str
+    POSTGRES_PORT: str = "5432"
+    DATABASE_URL: Optional[PostgresDsn] = None
     
-    # Supabase
-    SUPABASE_URL: str = Field(..., env="SUPABASE_URL")
-    SUPABASE_KEY: str = Field(..., env="SUPABASE_KEY")
-    SUPABASE_SERVICE_KEY: str = Field(..., env="SUPABASE_SERVICE_KEY")
-    
-    # CORS
-    CORS_ORIGINS: List[str] = Field(
-        default=[
-            "http://localhost:5173",
-            "http://localhost:3000",
-            "http://127.0.0.1:5173",
-            "http://127.0.0.1:3000",
-        ],
-        env="CORS_ORIGINS"
-    )
-    CORS_ALLOW_CREDENTIALS: bool = True
-    CORS_MAX_AGE: int = 600
+    @validator("DATABASE_URL", pre=True)
+    def assemble_db_url(cls, v: Optional[str], values: dict) -> str:
+        if v:
+            return v
+        return PostgresDsn.build(
+            scheme="postgresql",
+            user=values.get("POSTGRES_USER"),
+            password=values.get("POSTGRES_PASSWORD"),
+            host=values.get("POSTGRES_SERVER"),
+            port=values.get("POSTGRES_PORT"),
+            path=f"/{values.get('POSTGRES_DB')}"
+        )
     
     # Redis
-    REDIS_URL: str = Field(default="redis://localhost:6379/0", env="REDIS_URL")
-    REDIS_HOST: str = Field(default="localhost", env="REDIS_HOST")
-    REDIS_PORT: int = Field(default=6379, env="REDIS_PORT")
-    REDIS_DB: int = Field(default=0, env="REDIS_DB")
-    REDIS_PASSWORD: Optional[str] = Field(default=None, env="REDIS_PASSWORD")
-    REDIS_SSL: bool = Field(default=False, env="REDIS_SSL")
-    REDIS_TIMEOUT: int = 5
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_PASSWORD: Optional[str] = None
+    REDIS_DB: int = 0
+    REDIS_URL: Optional[RedisDsn] = None
     
-    # WebSocket
-    WS_PING_INTERVAL: int = Field(default=30, env="WS_PING_INTERVAL")
-    WS_PING_TIMEOUT: int = Field(default=10, env="WS_PING_TIMEOUT")
-    WS_MAX_MESSAGE_SIZE: int = Field(default=1024 * 1024, env="WS_MAX_MESSAGE_SIZE")  # 1MB
+    @validator("REDIS_URL", pre=True)
+    def assemble_redis_url(cls, v: Optional[str], values: dict) -> str:
+        if v:
+            return v
+        return RedisDsn.build(
+            scheme="redis",
+            host=values.get("REDIS_HOST"),
+            port=str(values.get("REDIS_PORT")),
+            password=values.get("REDIS_PASSWORD"),
+            path=f"/{values.get('REDIS_DB')}"
+        )
     
-    # PDF Processing
-    PDF_MAX_SIZE_MB: int = Field(default=10, env="PDF_MAX_SIZE_MB")
-    PDF_ALLOWED_TYPES: List[str] = ["application/pdf"]
-    PDF_PROCESSING_TIMEOUT: int = Field(default=300, env="PDF_PROCESSING_TIMEOUT")
-    PDF_CACHE_TTL: int = Field(default=3600, env="PDF_CACHE_TTL")
-    
-    # File Upload
-    UPLOAD_DIR: str = Field(default="uploads", env="UPLOAD_DIR")
-    MAX_UPLOAD_SIZE: int = Field(default=10 * 1024 * 1024, env="MAX_UPLOAD_SIZE")  # 10MB
-    ALLOWED_EXTENSIONS: List[str] = Field(default=["pdf"], env="ALLOWED_EXTENSIONS")
-    
-    # Cache
-    CACHE_TTL: int = Field(default=3600, env="CACHE_TTL")
-    CACHE_MAX_SIZE: int = Field(default=1000, env="CACHE_MAX_SIZE")
+    # Logging
+    LOG_LEVEL: str = "INFO"
+    LOG_FORMAT: str = "json"
+    LOG_FILE: Optional[str] = None
     
     # Rate Limiting
-    RATE_LIMIT_ENABLED: bool = Field(default=True, env="RATE_LIMIT_ENABLED")
-    RATE_LIMIT_STRATEGY: str = Field(default="fixed-window", env="RATE_LIMIT_STRATEGY")
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_DEFAULT: str = "100/minute"
+    RATE_LIMIT_ANONYMOUS: str = "20/minute"
+    RATE_LIMIT_AUTHENTICATED: str = "1000/hour"
     
-    # API Keys
-    UNSTRUCTURED_API_KEY: str = Field(..., env="UNSTRUCTURED_API_KEY")
-    OPENAI_API_KEY: str = Field(..., env="OPENAI_API_KEY")
+    # File Storage
+    UPLOAD_DIR: Path = Path("uploads")
+    MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10MB
+    ALLOWED_EXTENSIONS: List[str] = ["pdf", "jpg", "jpeg", "png"]
     
-    # Validation
-    @validator("JWT_SECRET")
-    def validate_jwt_secret(cls, v):
-        if len(v) < 32:
-            raise ValueError("JWT_SECRET must be at least 32 characters long")
-        return v
+    # Email
+    SMTP_HOST: str = "localhost"
+    SMTP_PORT: int = 587
+    SMTP_USER: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_TLS: bool = True
+    SMTP_FROM_EMAIL: str = "noreply@example.com"
+    SMTP_FROM_NAME: str = "Paper Trail Automator"
     
-    @validator("CORS_ORIGINS", pre=True)
-    def parse_cors_origins(cls, v):
-        if isinstance(v, str):
-            try:
-                import json
-                return json.loads(v)
-            except json.JSONDecodeError:
-                return [origin.strip() for origin in v.split(",")]
-        return v
+    # Webhooks
+    WEBHOOK_SECRET: str
+    WEBHOOK_TIMEOUT: int = 5
+    WEBHOOK_MAX_RETRIES: int = 3
     
-    @validator("REDIS_PASSWORD")
-    def validate_redis_password(cls, v, values):
-        if values.get("ENVIRONMENT") == "production" and not v:
-            raise ValueError("REDIS_PASSWORD must be set in production")
-        return v
+    # Feature Flags
+    FEATURE_USER_REGISTRATION: bool = True
+    FEATURE_EMAIL_VERIFICATION: bool = True
+    FEATURE_PASSWORD_RESET: bool = True
+    FEATURE_OAUTH: bool = False
+    FEATURE_WEBHOOKS: bool = True
+    FEATURE_ANALYTICS: bool = True
+    
+    # Cache
+    CACHE_ENABLED: bool = True
+    CACHE_TTL: int = 300  # 5 minutes
+    CACHE_KEY_PREFIX: str = "paper_trail:"
+    
+    # Monitoring
+    ENABLE_METRICS: bool = True
+    METRICS_PORT: int = 9090
+    HEALTH_CHECK_INTERVAL: int = 60
     
     class Config:
         env_file = ".env"
         case_sensitive = True
 
-    @property
-    def is_production(self) -> bool:
-        """Check if the application is running in production mode"""
-        return self.ENVIRONMENT.lower() == "production"
-    
-    @property
-    def is_development(self) -> bool:
-        """Check if the application is running in development mode"""
-        return self.ENVIRONMENT.lower() == "development"
-    
-    @property
-    def is_testing(self) -> bool:
-        """Check if the application is running in testing mode"""
-        return self.ENVIRONMENT.lower() == "testing"
-    
-    def get_redis_config(self) -> Dict[str, Any]:
-        """Get Redis configuration as a dictionary"""
-        return {
-            "host": self.REDIS_HOST,
-            "port": self.REDIS_PORT,
-            "db": self.REDIS_DB,
-            "password": self.REDIS_PASSWORD,
-            "ssl": self.REDIS_SSL
-        }
+# Create settings instance
+settings = Settings()
 
-@lru_cache()
-def get_settings() -> Settings:
-    """Get cached settings instance"""
-    try:
-        return Settings()
-    except Exception as e:
-        logger.error(f"Error loading settings: {str(e)}")
-        raise  # In development/testing, we want to fail fast if settings are misconfigured
+# Create required directories
+settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# Create a global settings instance
-settings = get_settings() 
+# Environment-specific settings
+if settings.ENVIRONMENT == "production":
+    settings.DEBUG = False
+    settings.CORS_ORIGINS = [
+        "https://app.example.com",
+        "https://api.example.com"
+    ]
+    settings.LOG_LEVEL = "INFO"
+    settings.LOG_FILE = "logs/app.log"
+    settings.RATE_LIMIT_ENABLED = True
+    settings.FEATURE_USER_REGISTRATION = False
+    settings.FEATURE_EMAIL_VERIFICATION = True
+    settings.SMTP_TLS = True
+    settings.CACHE_ENABLED = True
+    settings.ENABLE_METRICS = True
+
+elif settings.ENVIRONMENT == "staging":
+    settings.DEBUG = True
+    settings.CORS_ORIGINS = [
+        "https://staging.example.com",
+        "https://api-staging.example.com"
+    ]
+    settings.LOG_LEVEL = "DEBUG"
+    settings.LOG_FILE = "logs/staging.log"
+    settings.RATE_LIMIT_ENABLED = True
+    settings.FEATURE_USER_REGISTRATION = True
+    settings.FEATURE_EMAIL_VERIFICATION = True
+    settings.SMTP_TLS = True
+    settings.CACHE_ENABLED = True
+    settings.ENABLE_METRICS = True
+
+else:  # development
+    settings.DEBUG = True
+    settings.CORS_ORIGINS = ["http://localhost:3000"]
+    settings.LOG_LEVEL = "DEBUG"
+    settings.LOG_FILE = "logs/development.log"
+    settings.RATE_LIMIT_ENABLED = False
+    settings.FEATURE_USER_REGISTRATION = True
+    settings.FEATURE_EMAIL_VERIFICATION = False
+    settings.SMTP_TLS = False
+    settings.CACHE_ENABLED = False
+    settings.ENABLE_METRICS = True 

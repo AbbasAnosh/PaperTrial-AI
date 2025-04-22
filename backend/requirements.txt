@@ -4,14 +4,14 @@ uvicorn==0.24.0
 python-multipart==0.0.6
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-pydantic==2.4.2
+pydantic==2.5.2
 pydantic-settings==2.0.3
 email-validator>=2.1.0
 sqlalchemy==2.0.23
 alembic==1.12.1
 psycopg2-binary==2.9.9
 python-dotenv==1.0.0
-celery==5.3.4
+celery==5.3.6
 redis==5.0.1
 flower==2.0.1
 supabase==2.0.3
@@ -49,8 +49,8 @@ en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_
 scikit-learn>=1.0.0
 
 # Testing
-pytest>=7.4.3
-pytest-asyncio>=0.21.1
+pytest==7.4.3
+pytest-asyncio==0.21.1
 pytest-cov>=4.1.0
 
 # Development
@@ -69,4 +69,12 @@ passlib[bcrypt]>=1.7.4
 python-multipart>=0.0.6
 aiofiles>=0.7.0
 PyPDF2>=3.0.0
-numpy>=1.21.0 
+numpy>=1.21.0
+
+# Cache Service Enhancements
+tenacity>=8.2.3
+redis-py-cluster>=2.1.3
+hiredis>=2.0.0
+
+# Added from the code block
+lxml==4.9.3 
